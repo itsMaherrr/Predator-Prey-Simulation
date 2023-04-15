@@ -17,24 +17,25 @@ x = 0
 y = 1
 keep_checking = True
 
-window_width, window_height = 1920, 1080
-game_width, game_height = 930, 833
+window_width, window_height = 1920 // 2, 1080 // 2
+game_width, game_height = 930 // 2, 833 // 2
 minimap_width, minimap_height = game_width // 4, game_height // 4
 screen_bg_color = (96, 96, 96)
 window_bg_color = (128, 128, 128)
 red = (255, 0, 0)
 neon_green = (15, 255, 80)
 rect_width = 1
-angles = [-12, -10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12]
+predator_view_angles = np.linspace(-23, 23, num=24) % 360
+prey_view_angles = np.linspace(-127, 126, num=24) % 360
 clock = pygame.time.Clock()
 
 radius = 1
 velocity = 2
 
 predators = [Predator(red, random.randint(radius, game_width - radius), i, random.randint(radius, game_height - radius),
-                      brain=np.array([np.random.rand(10), np.random.rand(10)]), radius=radius, velocity=velocity) for i in range(200)]
+                      brain=np.array([np.random.rand(10), np.random.rand(10)]), radius=radius, velocity=velocity) for i in range(1)]
 preys = [Prey(neon_green, random.randint(radius, game_width - radius), i, random.randint(radius, game_height - radius),
-              brain=np.array([np.random.rand(10), np.random.rand(10)]), radius=radius, velocity=velocity) for i in range(1000)]
+              brain=np.array([np.random.rand(10), np.random.rand(10)]), radius=radius, velocity=velocity) for i in range(1)]
 
 def get_collision(entities1, entities2):
     if entities1 and entities2:
@@ -44,7 +45,7 @@ def get_collision(entities1, entities2):
         actual_preys = np.array([actual_prey.position for actual_prey in entities1]).astype(np.float32).flatten()
         actual_predators = np.array([actual_predator.position for actual_predator in entities2])\
             .astype(np.float32).flatten()
-        fed_predators = np.zeros(int(len(predators) / 2)).astype(np.int32)
+        fed_predators = np.zeros(int(len(actual_predators) / 2)).astype(np.int32)
         alive_preys = np.ones(int(len(actual_preys) / 2))
 
         actual_preys_gpu = cuda.mem_alloc(actual_preys.nbytes)
@@ -132,7 +133,7 @@ if __name__ == '__main__':
 
     pygame.init()
 
-    window = pygame.display.set_mode((window_width, window_height), pygame.FULLSCREEN)
+    window = pygame.display.set_mode((window_width, window_height))
     pygame.display.set_caption("Lotka-Volterra")
     screen = pygame.Surface((game_width, game_height))
     mini_map = pygame.Surface((minimap_width, minimap_height))
@@ -160,15 +161,23 @@ if __name__ == '__main__':
                     prey.stop_counting()
             if event.type == pygame.MOUSEBUTTONUP:
                 position = pygame.mouse.get_pos()
-                screen.blit(pygame.transform.scale_by(screen, 1.1), (0, 0),
-                                  position + ([window_height * 2] * 2))
+                # screen.blit(pygame.transform.scale_by(screen, 1.1), (0, 0),
+                #                 position + ([window_height * 2] * 2))
 
 
         for predator in predators:
             predator.move()
             predator_shape = predator_img_angles[predator.get_view_angle_in_degrees()]
-            predator.draw_view_range(screen, angles, predator_shape.get_rect().center)
-
+            predator.draw_view_range(screen, predator_view_angles, predator_shape.get_rect().center)
+            direction = pgm.Vector2(1, 0).rotate(-predator.get_view_angle_in_degrees())
+            line_of_vision = direction * predator.view_range
+            for prey in preys:
+                vec_to_other = np.array(prey.position) - np.array(predator.position)
+                angle = line_of_vision.angle_to(vec_to_other)
+                if int(angle % 360) in predator_view_angles:
+                    distance = np.linalg.norm(vec_to_other)
+                    if distance <= predator.view_range + prey.radius:
+                        print(f"predator {predator.id} sees prey {prey.id}")
             """
             if predator.position[x] <= radius or predator.position[x] >= game_width - radius:
                 predator.rebound()
@@ -181,7 +190,7 @@ if __name__ == '__main__':
         for prey in preys:
             prey.move()
             prey_shape = prey_img_angles[prey.get_view_angle_in_degrees()]
-            prey.draw_view_range(screen, angles, prey_shape.get_rect().center)
+            prey.draw_view_range(screen, prey_view_angles, prey_shape.get_rect().center)
             """
             if prey.position[x] <= radius or prey.position[x] >= game_width - radius:
                 prey.rebound()
@@ -202,7 +211,7 @@ if __name__ == '__main__':
         #mini_map.blit(resized_screen, (0, 0))
         window.blit(screen, (window_width / 16, 15))
         window.blit(mini_map, (window_width / 1.5, 15))
-        print(clock.get_fps())
+        #print(clock.get_fps())
         pygame.display.update()
         clock.tick(60)
 

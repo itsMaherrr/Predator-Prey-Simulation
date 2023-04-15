@@ -14,7 +14,7 @@ class Entity(ABC, Sprite):
     x = 0
     y = 1
     one_second = 1
-    view_range = 200
+    view_range = 1000
 
     def __init__(self, color, x_pos, id, y_pos, brain, radius=2, velocity=1):
         Sprite.__init__(self)
@@ -116,7 +116,7 @@ class Entity(ABC, Sprite):
         self.draw_lines = not self.draw_lines
 
     def draw_view_range(self, screen, angles, start):
-        if self.draw_lines:
+        if self.draw_lines or self.id == 0:
             white = (255, 255, 255)
             base_angle = - self.get_view_angle_in_degrees()
             relative_angles = [base_angle + angle for angle in angles]
