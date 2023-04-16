@@ -19,8 +19,10 @@ class Entity(ABC, Sprite):
     def __init__(self, color, x_pos, id, y_pos, brain, radius=2, velocity=1):
         Sprite.__init__(self)
         self.id = id
+        self._nearby_objects = np.array([[0, 0]])
+        self._enemies_nbr = 0
         self._brain = brain
-        self._eyes = np.ones(10)
+        self._eyes = np.ones(48)
         self.color = color
         self.position = [x_pos, y_pos]
         self.radius = radius
@@ -31,9 +33,8 @@ class Entity(ABC, Sprite):
         self.hp = 100
         self._survival_time = 0
         self._scheduler = sched.scheduler(time.time, time.sleep)
-        self._continue_counting = True
-        self.counter = threading.Thread(target=self.act)
-        self.counter.start()
+        #self.counter = threading.Thread(target=self.act)
+        #self.counter.start()
 
     def move(self):
         #print(f"linear speed is {self.linear_speed}, view angle is {self._view_angle} and cos is {math.cos(self._view_angle)}")
@@ -56,13 +57,12 @@ class Entity(ABC, Sprite):
         self.linear_speed = linear_speed
         self.angular_velocity = angular_velocity
 
-    def update_eyes(self):
-        self._eyes = np.random.randn(10)/3
+    def update_eyes(self, inputs):
+        self._eyes = np.array(inputs)
 
     def think_and_move(self):
-        self.update_eyes()
         potential = np.dot(self._brain, self._eyes)
-        linear_speed, angular_velocity = self.sigmoid(potential[0]), np.tanh(potential[1])
+        linear_speed, angular_velocity = np.tanh(potential[0]), np.tanh(potential[1])
         self.change_velocity(linear_speed * 2, angular_velocity / 10)
 
     def get_survival_time(self):
@@ -74,14 +74,15 @@ class Entity(ABC, Sprite):
     survival_time = property(get_survival_time, set_survival_time)
 
     def increment_survival_time(self):
-        self.survival_time += 1
+        self.survival_time += 1/30
 
     def act(self):
-        while self._continue_counting:
+        #while self._continue_counting:
+            #time.sleep(0.5)
             self.increment_survival_time()
+            self.handle_nearby_entities()
             self.think_and_move()
             self.update_view_angle()
-            time.sleep(1)
 
     def update_view_angle(self):
         self._view_angle = (self._view_angle + self.angular_velocity) % (-2 * math.pi)
@@ -89,13 +90,8 @@ class Entity(ABC, Sprite):
     def stop_counting(self):
         self._continue_counting = False
 
-    def detect_nearby_objects(self, objects):
-        nearby_objects = []
-        for obj in objects:
-            distance = math.sqrt((obj.position[obj.x] - self.position[self.x]) ** 2 + (obj.position[obj.y] - self.position[self.y]) ** 2)
-            if distance <= self.view_range:
-                nearby_objects.append(obj)
-        return nearby_objects
+    def set_nearby_objects(self, objects):
+        self._nearby_objects = objects
 
     def get_points_at_angles_and_distance(self, distance, angles):
         points = []
@@ -125,6 +121,10 @@ class Entity(ABC, Sprite):
                 for point in points:
                     start_position = (self.position[Entity.x] + start[Entity.x], self.position[Entity.y] + start[Entity.y])
                     pygame.draw.aaline(screen, white, start_position, point, 1)
+
+    @abstractmethod
+    def handle_nearby_entities(self):
+        pass
 
     def sigmoid(self, x):
         return 1 / (1 + np.exp(-x))

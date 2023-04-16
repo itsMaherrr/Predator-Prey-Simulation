@@ -32,10 +32,15 @@ clock = pygame.time.Clock()
 radius = 1
 velocity = 2
 
+predators_num = 100
+preys_num = 700
+
+continue_counting = True
+
 predators = [Predator(red, random.randint(radius, game_width - radius), i, random.randint(radius, game_height - radius),
-                      brain=np.array([np.random.rand(10), np.random.rand(10)]), radius=radius, velocity=velocity) for i in range(1)]
+                      brain=np.array([np.random.rand(48), np.random.rand(48)]), radius=radius, velocity=velocity) for i in range(predators_num)]
 preys = [Prey(neon_green, random.randint(radius, game_width - radius), i, random.randint(radius, game_height - radius),
-              brain=np.array([np.random.rand(10), np.random.rand(10)]), radius=radius, velocity=velocity) for i in range(1)]
+              brain=np.array([np.random.rand(48), np.random.rand(48)]), radius=radius, velocity=velocity) for i in range(preys_num)]
 
 def get_collision(entities1, entities2):
     if entities1 and entities2:
@@ -74,6 +79,51 @@ def get_collision(entities1, entities2):
         return np.array(collided_entities), np.array(fed_preds)
     return np.array([]), np.array([])
 
+def get_vision(predators, preys):
+    if predators and preys:
+        find_angles = mod.get_function("find_angles")
+        actual_predators = np.array([(predator.position[0], predator.position[1], predator.get_view_angle()) for predator in predators]).flatten().astype(np.float32)
+        actual_entities = np.concatenate(
+            (np.array([prey.position for prey in preys]), np.array([predator.position for predator in predators]))).flatten().astype(np.float32)
+        nbr_predators = len(predators)
+        nbr_preys = len(preys)
+        nbr_entities = nbr_preys + nbr_predators
+        result = np.ones(nbr_predators * nbr_entities * 2).astype(np.float32)
+
+        predators_gpu = cuda.mem_alloc(actual_predators.nbytes)
+        entities_gpu = cuda.mem_alloc(actual_entities.nbytes)
+        result_gpu = cuda.mem_alloc(result.nbytes)
+
+        cuda.memcpy_htod(predators_gpu, actual_predators)
+        cuda.memcpy_htod(entities_gpu, actual_entities)
+        cuda.memcpy_htod(result_gpu, result)
+
+        block_size = 1024
+        marge = nbr_entities - block_size
+        num_blocks = nbr_predators + (marge * nbr_predators + block_size - 1) // block_size
+        grid_size = (num_blocks, 1, 1)
+        block_size = (block_size, 1, 1)
+
+        find_angles(predators_gpu, entities_gpu, result_gpu, np.int32(nbr_predators), np.int32(nbr_entities),
+                    block=block_size,
+                    grid=grid_size)
+
+        final_result = np.empty_like(result)
+        cuda.memcpy_dtoh(final_result, result_gpu)
+        final_result = final_result.reshape((nbr_predators, nbr_entities, 2))
+
+        #indexes = np.where(np.isin(final_result[:, :, 0], predator_view_angles))
+        return final_result
+    return np.array([])
+
+
+def make_acts(entities):
+    while continue_counting:
+        for entity in entities:
+            entity.act()
+        time.sleep(1/30)
+
+
 def reproduct_preys():
     collided_preys = get_collision(preys, preys)
 
@@ -90,6 +140,15 @@ def update_preys():
             j += 1
     for i in np.where(fed_predators > 0)[0]:
         predators[i].eat_prey(fed_predators[i])
+
+def handle_vision(predators, preys, view_angles):
+    vision = get_vision(predators, preys)
+    enemies_nbr = len(preys)
+    for i in range(vision.shape[0]):
+        #handle_entities_thread = threading.Thread(target=predators[i].handle_nearby_entities, args=(vision[i], enemies_nbr, view_angles))
+        #handle_entities_thread.start()
+        #predators[i].handle_nearby_entities(vision[i], enemies_nbr, view_angles)
+        predators[i].set_nearby_objects(vision[i])
 
 def calculate_distances(entities_1, entities_2):
     return np.linalg.norm(entities_1[:, np.newaxis] - entities_2, axis=2)
@@ -138,14 +197,18 @@ if __name__ == '__main__':
     screen = pygame.Surface((game_width, game_height))
     mini_map = pygame.Surface((minimap_width, minimap_height))
     prey_img_angles, predator_img_angles = init_all_images()
+
+    predators_acting_thread = threading.Thread(target=make_acts, args=(predators,))
+    predators_acting_thread.start()
+    preys_acting_thread = threading.Thread(target=make_acts, args=(preys,))
+    preys_acting_thread.start()
+
     running = True
 
     while running:
         update_preys()
-        #survival_checking_thread = threading.Thread(target=reproduct_predators())
-        #survival_checking_thread.start()
-        #survival_checking_thread = threading.Thread(target=reproduct_preys())
-        #survival_checking_thread.start()
+        handle_vision(predators, preys, predator_view_angles)
+        handle_vision(preys, predators, prey_view_angles)
         #distances = get_all_distances()
         window.fill(window_bg_color)
         screen.fill(screen_bg_color)
@@ -169,6 +232,7 @@ if __name__ == '__main__':
             predator.move()
             predator_shape = predator_img_angles[predator.get_view_angle_in_degrees()]
             predator.draw_view_range(screen, predator_view_angles, predator_shape.get_rect().center)
+            """
             direction = pgm.Vector2(1, 0).rotate(-predator.get_view_angle_in_degrees())
             line_of_vision = direction * predator.view_range
             for prey in preys:
@@ -178,6 +242,7 @@ if __name__ == '__main__':
                     distance = np.linalg.norm(vec_to_other)
                     if distance <= predator.view_range + prey.radius:
                         print(f"predator {predator.id} sees prey {prey.id}")
+            """
             """
             if predator.position[x] <= radius or predator.position[x] >= game_width - radius:
                 predator.rebound()
@@ -211,7 +276,7 @@ if __name__ == '__main__':
         #mini_map.blit(resized_screen, (0, 0))
         window.blit(screen, (window_width / 16, 15))
         window.blit(mini_map, (window_width / 1.5, 15))
-        #print(clock.get_fps())
+        print(clock.get_fps())
         pygame.display.update()
         clock.tick(60)
 
